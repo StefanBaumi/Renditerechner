@@ -1,417 +1,169 @@
 import streamlit as st
-import yfinance as yf
-import numpy as np
 import pandas as pd
-
-st.set_page_config(layout="centered")
-st.title("Erweitertes Renditerechner-Tool")
-
-###############################################################################
-#  HILFSFUNKTIONEN ZUR BERECHNUNG
-###############################################################################
-
-def project_kgv_scenario(
-    start_revenue,
-    start_shares,
-    start_net_margin,     # in %
-    annual_revenue_growth,
-    annual_dilution,      # in %
-    future_pe,
-    discount_rate,        # in %
-    margin_of_safety,     # in %
-    years
-):
-    """
-    KGV-Ansatz (pro Jahr):
-      1) Umsatz wächst mit annual_revenue_growth %
-      2) Nettomarge (start_net_margin) bleibt hier als Konstante
-      3) Netto-Gewinn = Umsatz * (net_margin/100)
-      4) Aktienanzahl ändert sich um annual_dilution % p.a.
-      5) EPS = Netto-Gewinn / Aktienanzahl
-      6) Am Ende: Market Cap = (Gewinn in Jahr X) * future_pe
-         => Kurs in Jahr X = Market Cap / Aktienanzahl
-      7) Diskontierung auf heute
-      8) Margin of Safety abziehen
-
-    Rückgabe:
-      - df (DataFrame) mit Verlauf von Jahr zu Jahr (Umsatz, Gewinn, Shares, EPS, FCF=0 hier)
-      - fair_price_today (ohne MoS)
-      - fair_price_mos (mit MoS)
-    """
-    # Jährliche Faktoren
-    g = 1 + annual_revenue_growth / 100.0
-    d = 1 + annual_dilution / 100.0
-    r = 1 + discount_rate / 100.0
-    
-    # Startwerte
-    revenue = start_revenue
-    shares = start_shares
-    net_margin_decimal = start_net_margin / 100.0
-
-    # Für die grafische Darstellung speichern wir pro Jahr die Werte
-    records = []
-    
-    for year in range(0, years+1):
-        # Gewinn
-        net_income = revenue * net_margin_decimal
-        # EPS
-        eps = net_income / shares if shares > 0 else 0.0
-
-        records.append({
-            "Jahr": year,
-            "Umsatz": revenue,
-            "NetIncome": net_income,
-            "Shares": shares,
-            "EPS": eps,
-            "FCF": 0.0  # Im KGV-Modell ignorieren wir FCF; nur für Diagramm-Konsistenz
-        })
-        
-        # Nächste Periode
-        revenue *= g
-        shares *= d
-
-    # Letztes Jahr: Market Cap = NetIncome * future_pe
-    final_net_income = records[-1]["NetIncome"]
-    final_shares = records[-1]["Shares"]
-    if final_shares > 0:
-        final_market_cap = final_net_income * future_pe
-        future_price = final_market_cap / final_shares
-    else:
-        future_price = 0.0
-
-    # Diskontierung
-    fair_price_today = future_price / (r ** years)
-
-    # Margin of Safety
-    mos_factor = 1 - margin_of_safety / 100.0
-    fair_price_mos = fair_price_today * mos_factor
-
-    df = pd.DataFrame(records)
-    return df, fair_price_today, fair_price_mos
-
-
-def project_dcf_scenario(
-    start_revenue,
-    start_shares,
-    start_net_margin,     # in %
-    fcf_margin,           # in %
-    annual_revenue_growth,
-    annual_dilution,      # in %
-    discount_rate,        # in %
-    terminal_growth,      # in %
-    margin_of_safety,     # in %
-    years
-):
-    """
-    Vereinfachter DCF-Ansatz (pro Jahr):
-      1) Umsatz wächst mit annual_revenue_growth %
-      2) Nettomarge bleibt konstant
-      3) Netto-Gewinn = Umsatz * (net_margin/100)
-      4) FCF = Umsatz * (fcf_margin/100) (vereinfachte Annahme)
-      5) Aktienanzahl ändert sich um annual_dilution % p.a.
-      6) Jedes Jahr FCF diskontieren und aufsummieren
-      7) Terminal Value: FCF im letzten Jahr * (1+terminal_growth/100) / (WACC - terminal_growth)
-         und diskontieren
-      8) Unternehmenswert = Summe aller diskontierten FCF + diskontierter Terminal Value
-         => Aktienkurs = Unternehmenswert / Aktienanzahl letzter Periode
-      9) Margin of Safety
-
-    Rückgabe:
-      - df (DataFrame) mit Verlauf pro Jahr (Umsatz, NetIncome, Shares, EPS, FCF)
-      - fair_price_today (ohne MoS)
-      - fair_price_mos (mit MoS)
-    """
-    g = 1 + annual_revenue_growth / 100.0
-    d = 1 + annual_dilution / 100.0
-    r = 1 + discount_rate / 100.0
-
-    net_margin_decimal = start_net_margin / 100.0
-    fcf_margin_decimal = fcf_margin / 100.0
-
-    revenue = start_revenue
-    shares = start_shares
-
-    records = []
-    npv = 0.0  # Net Present Value aller FCFs
-
-    for year in range(1, years+1):
-        # Update (Wachstum) am Anfang jeder Periode
-        revenue *= g
-        shares *= d
-
-        # Gewinn und FCF in diesem Jahr
-        net_income = revenue * net_margin_decimal
-        fcf = revenue * fcf_margin_decimal
-
-        # Diskontierung des FCF
-        discounted_fcf = fcf / (r ** year)
-        npv += discounted_fcf
-
-        eps = net_income / shares if shares > 0 else 0.0
-
-        records.append({
-            "Jahr": year,
-            "Umsatz": revenue,
-            "NetIncome": net_income,
-            "Shares": shares,
-            "EPS": eps,
-            "FCF": fcf
-        })
-
-    # Terminal Value am Ende von "years"
-    if (discount_rate > terminal_growth):
-        # Letzter FCF
-        fcf_last = records[-1]["FCF"] if records else 0.0
-        tv = fcf_last * (1 + terminal_growth/100.0) / ((discount_rate/100.0) - (terminal_growth/100.0))
-        # Auf heute diskontieren
-        tv_pv = tv / (r ** years)
-    else:
-        tv_pv = 0.0
-
-    total_value = npv + tv_pv
-
-    # Aktienanzahl am Ende
-    final_shares = records[-1]["Shares"] if records else start_shares
-
-    if final_shares > 0:
-        fair_price_today = total_value / final_shares
-    else:
-        fair_price_today = 0.0
-
-    mos_factor = 1 - margin_of_safety / 100.0
-    fair_price_mos = fair_price_today * mos_factor
-
-    df = pd.DataFrame(records)
-    return df, fair_price_today, fair_price_mos
-
-
-###############################################################################
-#  1) BASISDATEN EINGEBEN
-###############################################################################
-st.header("1) Basisdaten laden")
-
-ticker = st.text_input("Aktien-Ticker (z.B. AAPL):", "AAPL")
-
-try:
-    data = yf.Ticker(ticker).info
-    current_price = data.get("regularMarketPrice", 150.0)
-    market_cap = data.get("marketCap", 2e11)
-    revenue_ttm = data.get("totalRevenue", 5e10)   # Umsatz TTM
-    net_income_ttm = data.get("netIncomeToCommon", 5e9)
-    shares_outstanding = data.get("sharesOutstanding", market_cap/current_price)
-except:
-    st.warning("Fehler beim Laden der Daten. Verwende Defaultwerte.")
-    current_price = 150.0
-    market_cap = 2e11
-    revenue_ttm = 5e10
-    net_income_ttm = 5e9
-    shares_outstanding = market_cap / current_price
-
-col1, col2, col3 = st.columns(3)
-with col1:
-    st.write(f"**Aktueller Kurs:** {current_price:.2f} USD")
-with col2:
-    st.write(f"**Marktkap.:** {market_cap/1e9:.2f} Mrd. USD")
-with col3:
-    st.write(f"**Aktienanzahl:** {shares_outstanding/1e6:.2f} Mio.")
-
-st.write(f"**Umsatz (TTM):** {revenue_ttm/1e9:.2f} Mrd. USD")
-st.write(f"**Gewinn (TTM):** {net_income_ttm/1e9:.2f} Mrd. USD")
-
-###############################################################################
-#  2) METHODENWAHL (KGV ODER DCF)
-###############################################################################
-valuation_method = st.radio(
-    "Bewertungsmethode wählen:",
-    ("KGV-Ansatz", "DCF-Ansatz")
-)
-
-###############################################################################
-#  3) SZENARIEN-EINGABE (BEST, BASE, WORST)
-###############################################################################
-st.header("2) Szenarien (Best, Base, Worst)")
-
-scenario_names = ["Best", "Base", "Worst"]
-scenario_data = {}
-
-col_scenarios = st.columns(3)
-for i, scenario in enumerate(scenario_names):
-    with col_scenarios[i]:
-        st.subheader(f"{scenario} Case")
-        
-        # Umsatzwachstum
-        revenue_growth = st.number_input(
-            f"{scenario} Umsatzwachstum (%)", 
-            value=10.0 + (5*(2 - i)),  # nur als Beispiel
-            key=f"rev_growth_{scenario}"
-        )
-        # Nettomarge
-        net_margin = st.number_input(
-            f"{scenario} Nettomarge (%)",
-            value= (net_income_ttm/revenue_ttm*100) if revenue_ttm>0 else 10.0,
-            key=f"net_margin_{scenario}"
-        )
-        # Verwässerung / Rückkäufe
-        dilution = st.number_input(
-            f"{scenario} Verwässerung (+) / Rückkäufe (-) (% p.a.)", 
-            value=0.0,
-            key=f"dilution_{scenario}"
-        )
-        # Diskontierungsrate
-        discount = st.number_input(
-            f"{scenario} Diskontierungsrate (%)",
-            value=8.0,
-            key=f"discount_{scenario}"
-        )
-        # Margin of Safety
-        mos = st.number_input(
-            f"{scenario} Margin of Safety (%)",
-            value=10.0 if scenario != "Worst" else 20.0,
-            key=f"mos_{scenario}"
-        )
-        
-        # KGV-relevant
-        future_pe = st.number_input(
-            f"{scenario} KGV am Ende (nur KGV-Modus)",
-            value=15.0 + (5*(2 - i)),  # z.B. Best=25, Base=20, Worst=15
-            key=f"pe_{scenario}"
-        )
-        
-        # DCF-relevant
-        fcf_margin = st.number_input(
-            f"{scenario} FCF-Marge (%) (nur DCF)",
-            value=10.0,
-            key=f"fcf_{scenario}"
-        )
-        terminal_growth = st.number_input(
-            f"{scenario} Terminal Growth (%) (nur DCF)",
-            value=2.0,
-            key=f"terminal_{scenario}"
-        )
-
-        scenario_data[scenario] = {
-            "revenue_growth": revenue_growth,
-            "net_margin": net_margin,
-            "dilution": dilution,
-            "discount_rate": discount,
-            "margin_of_safety": mos,
-            "future_pe": future_pe,
-            "fcf_margin": fcf_margin,
-            "terminal_growth": terminal_growth
-        }
-
-years = st.slider("Zeithorizont (Jahre):", 1, 15, 5)
-
-###############################################################################
-#  4) BERECHNUNG JE SZENARIO
-###############################################################################
-st.header("3) Ergebnisse")
-
-# Hier speichern wir die Resultate + DataFrames pro Szenario
-results = {}
-dfs = {}
-
-for scenario in scenario_names:
-    sd = scenario_data[scenario]
-
-    if valuation_method == "KGV-Ansatz":
-        # KGV-Modell
-        df_scen, fair_price, fair_price_mos = project_kgv_scenario(
-            start_revenue=revenue_ttm,
-            start_shares=shares_outstanding,
-            start_net_margin=sd["net_margin"],
-            annual_revenue_growth=sd["revenue_growth"],
-            annual_dilution=sd["dilution"],
-            future_pe=sd["future_pe"],
-            discount_rate=sd["discount_rate"],
-            margin_of_safety=sd["margin_of_safety"],
-            years=years
-        )
-    else:
-        # DCF-Modell
-        df_scen, fair_price, fair_price_mos = project_dcf_scenario(
-            start_revenue=revenue_ttm,
-            start_shares=shares_outstanding,
-            start_net_margin=sd["net_margin"],
-            fcf_margin=sd["fcf_margin"],
-            annual_revenue_growth=sd["revenue_growth"],
-            annual_dilution=sd["dilution"],
-            discount_rate=sd["discount_rate"],
-            terminal_growth=sd["terminal_growth"],
-            margin_of_safety=sd["margin_of_safety"],
-            years=years
-        )
-
-    # Daten speichern
-    results[scenario] = {
-        "fair_no_mos": fair_price,
-        "fair_with_mos": fair_price_mos
-    }
-    dfs[scenario] = df_scen
-
-# Tabelle mit den Ergebnissen
-res_table = []
-for scenario in scenario_names:
-    fair_no_mos = results[scenario]["fair_no_mos"]
-    fair_with_mos = results[scenario]["fair_with_mos"]
-    # Upside vs. aktueller Kurs
-    if current_price > 0:
-        upside = (fair_with_mos / current_price - 1) * 100
-    else:
-        upside = 0
-
-    res_table.append([
-        scenario,
-        f"{fair_no_mos:.2f}",
-        f"{fair_with_mos:.2f}",
-        f"{upside:.2f} %"
-    ])
-
-df_results = pd.DataFrame(
-    res_table,
-    columns=["Szenario", "Fairer Preis (ohne MoS)", "Fairer Preis (mit MoS)", "Upside vs. Kurs"]
-)
-st.write(df_results)
-
-st.write("""
-- **Fairer Preis (ohne MoS)**: Diskontierter Wert ohne Sicherheitsabschlag  
-- **Fairer Preis (mit MoS)**: Zusätzlich um die Margin of Safety reduziert  
-- **Upside vs. Kurs**: Potenzielles Kurspotenzial gegenüber dem aktuellen Aktienkurs
-""")
-
-###############################################################################
-#  5) GRAFISCHE DARSTELLUNG
-###############################################################################
-st.header("4) Grafische Darstellung")
-
-st.write(f"**Bewertungsmethode**: {valuation_method}")
-
-# Wir erstellen je nach Bewertungsmethode ein gemeinsames Diagramm
-# - KGV: EPS-Verläufe pro Szenario
-# - DCF: FCF-Verläufe pro Szenario
-
+import numpy as np
 import matplotlib.pyplot as plt
 
-fig, ax = plt.subplots(figsize=(8,5))
+# ---------------------------------------------------------
+# Seitenkonfiguration
+# ---------------------------------------------------------
+st.set_page_config(layout="centered", page_title="Erweitertes Renditerechner-Tool")
 
-if valuation_method == "KGV-Ansatz":
-    # EPS-Entwicklung
-    for scenario in scenario_names:
-        df_scen = dfs[scenario]
-        ax.plot(df_scen["Jahr"], df_scen["EPS"], marker='o', label=f"{scenario} EPS")
-    ax.set_title("EPS-Entwicklung pro Szenario (KGV-Ansatz)")
-    ax.set_ylabel("EPS (USD)")
-else:
-    # FCF-Entwicklung
-    for scenario in scenario_names:
-        df_scen = dfs[scenario]
-        ax.plot(df_scen["Jahr"], df_scen["FCF"]/1e9, marker='o', label=f"{scenario} FCF (Mrd. USD)")
-    ax.set_title("FCF-Entwicklung pro Szenario (DCF-Ansatz)")
-    ax.set_ylabel("Free Cashflow (Mrd. USD)")
+# Optional: eigenes Theme via CSS (einfaches Beispiel)
+st.markdown("""
+<style>
+/* Hintergrundfarbe */
+body {
+    background-color: #f8f9fa;
+}
+/* Überschriften-Stil */
+h1, h2, h3 {
+    color: #333333;
+    font-family: "Arial", sans-serif;
+}
+/* Kartenähnliche Container */
+.block-container {
+    background-color: #ffffff;
+    padding: 2rem 2rem 2rem 2rem;
+    border-radius: 8px;
+    box-shadow: 0px 0px 10px rgba(0,0,0,0.05);
+}
+/* Tabellenstil */
+table {
+    font-size: 14px;
+}
+</style>
+""", unsafe_allow_html=True)
 
-ax.set_xlabel("Jahr")
-ax.grid(True)
-ax.legend()
+# ---------------------------------------------------------
+# TITEL
+# ---------------------------------------------------------
+st.title("Berechnung der Rendite in drei Szenarien")
+st.markdown("""
+### Status Quo » Die Zahlen heute
+""")
+
+# ---------------------------------------------------------
+# 1) STATUS QUO EINGABEN
+# ---------------------------------------------------------
+col1, col2, col3, col4 = st.columns(4)
+
+with col1:
+    boersenwert = st.number_input("Börsenwert (Mrd.)", value=1056.0, step=1.0)
+with col2:
+    aktienkurs = st.number_input("Aktienkurs", value=131.0, step=1.0)
+with col3:
+    umsatz = st.number_input("Umsatz (Mrd.)", value=514.0, step=1.0)
+with col4:
+    ausschüttungsquote = st.number_input("Ausschüttungsquote (%)", value=0.0, step=1.0)
+
+st.write("---")
+
+# ---------------------------------------------------------
+# 2) ZUKUNFTSANNAHMEN
+# ---------------------------------------------------------
+st.markdown("### Zukunft » Annahmen zur Wertentwicklung")
+
+st.markdown("""
+Die kurzfristigen Werte nähern sich über einen 10-Jahres-Horizont an die langfristigen an.
+""")
+
+colA, colB, colC, colD = st.columns(4)
+
+with colA:
+    wachstum_kurz = st.number_input("Wachstum kurzf. (%)", value=7.0, step=1.0)
+    wachstum_lang = st.number_input("Wachstum langfr. (%)", value=14.0, step=1.0)
+with colB:
+    nettomarge_kurz = st.number_input("Nettomarge kurzf. (%)", value=4.0, step=1.0)
+    nettomarge_lang = st.number_input("Nettomarge langfr. (%)", value=10.0, step=1.0)
+with colC:
+    kgv_kurz = st.number_input("KGV kurzf.", value=15.0, step=1.0)
+    kgv_lang = st.number_input("KGV langfr.", value=25.0, step=1.0)
+with colD:
+    shareholder_yield_kurz = st.number_input("Shareholder Yield kurzf. (%)", value=1.0, step=1.0)
+    shareholder_yield_lang = st.number_input("Shareholder Yield langfr. (%)", value=3.0, step=1.0)
+
+margin_of_safety = st.slider("Margin of Safety (%)", min_value=0, max_value=50, value=20)
+
+st.write("---")
+
+# ---------------------------------------------------------
+# 3) BERECHNUNGEN / TABELLE
+#    -> Hier bauen wir eine Beispiel-Tabelle, die "kurzfristig" / "langfristig" anzeigt
+# ---------------------------------------------------------
+st.markdown("### Ergebnisse in zwei Szenarien (kurzfristig vs. langfristig)")
+
+# Beispielhafte Berechnungen (sehr vereinfacht):
+def calc_fair_value(umsatz, marge, kgv):
+    # Netto-Gewinn
+    net_income = umsatz * (marge / 100)
+    # Fairer Wert = net_income * kgv
+    return net_income * kgv
+
+# Kurzfristig
+fair_value_kurz = calc_fair_value(umsatz, nettomarge_kurz, kgv_kurz)
+fair_value_kurz_mos = fair_value_kurz * (1 - margin_of_safety/100)
+
+# Langfristig
+fair_value_lang = calc_fair_value(umsatz, nettomarge_lang, kgv_lang)
+fair_value_lang_mos = fair_value_lang * (1 - margin_of_safety/100)
+
+# Shareholder Yield Einbeziehen (sehr vereinfacht):
+# "Gesamtrendite" ~ Wertsteigerung + Shareholder Yield
+# Hier rein exemplarisch:
+wertsteigerung_kurz = (fair_value_kurz / (boersenwert*1e6)) - 1  # pseudo
+wertsteigerung_lang = (fair_value_lang / (boersenwert*1e6)) - 1
+
+gesamtrendite_kurz = (wertsteigerung_kurz + (shareholder_yield_kurz/100)) * 100
+gesamtrendite_lang = (wertsteigerung_lang + (shareholder_yield_lang/100)) * 100
+
+df_ergebnisse = pd.DataFrame({
+    "": ["Kurzfristig", "Langfristig"],
+    "Wachstum (%)": [wachstum_kurz, wachstum_lang],
+    "Nettomarge (%)": [nettomarge_kurz, nettomarge_lang],
+    "KGV": [kgv_kurz, kgv_lang],
+    "Shareholder Yield (%)": [shareholder_yield_kurz, shareholder_yield_lang],
+    "Fairer Wert (o. MoS)": [fair_value_kurz, fair_value_lang],
+    "Fairer Wert (m. MoS)": [fair_value_kurz_mos, fair_value_lang_mos],
+    "Gesamtrendite (%)": [gesamtrendite_kurz, gesamtrendite_lang]
+})
+
+st.table(df_ergebnisse)
+
+st.markdown("""
+**Hinweis**: Dies ist eine stark vereinfachte Darstellung. 
+In der Realität würden hier komplexere Formeln für Wachstum, 
+DCF-Berechnungen, Diskontierung, etc. verwendet.
+""")
+
+st.write("---")
+
+# ---------------------------------------------------------
+# 4) GRAFIK
+#    -> Beispiel: Ein Balkendiagramm zur jährlichen Rendite
+# ---------------------------------------------------------
+st.markdown("### Jährl. Renditeerwartung in %")
+
+labels = ["kurzfristig", "langfristig"]
+renditen = [gesamtrendite_kurz, gesamtrendite_lang]
+
+fig, ax = plt.subplots(figsize=(5,3))
+ax.bar(labels, renditen, color=["#1f77b4", "#ff7f0e"])
+ax.set_ylim([min(renditen)-5, max(renditen)+5])
+ax.set_ylabel("Rendite in %")
+for i, v in enumerate(renditen):
+    ax.text(i, v + 0.5, f"{v:.1f}%", ha="center")
+ax.set_title("Jährliche Renditeerwartung (Beispiel)")
+
 st.pyplot(fig)
 
-st.success("Fertig! Alle gewünschten Punkte (Szenarien, MoS, KGV/DCF, Nettomargen, Diagramme) sind integriert.")
+st.write("---")
+
+# ---------------------------------------------------------
+# ABSCHLUSS
+# ---------------------------------------------------------
+st.markdown("""
+**Disclaimer**: 
+Keine Garantie für die Zukunft. 
+Dieses Beispiel soll nur das Layout demonstrieren und ersetzt 
+keine professionelle Anlageberatung.
+""")
