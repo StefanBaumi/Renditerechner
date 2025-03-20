@@ -1,152 +1,215 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
 
 ###############################################################################
-# STREAMLIT-SEITENKONFIGURATION
+# STREAMLIT-KONFIG
 ###############################################################################
-st.set_page_config(
-    page_title="Renditerechner Clean",
-    layout="wide"
-)
+st.set_page_config(page_title="Renditerechner (Lineare Annäherung)", layout="wide")
 
-###############################################################################
-# TITEL & EINLEITUNG
-###############################################################################
-st.title("Berechnung der Rendite in drei Szenarien")
+st.title("Renditerechner mit 3 Szenarien (Best, Base, Worst) – Lineare Annäherung")
+
 st.markdown("""
-Willkommen zu deinem Renditerechner!  
-Gib unten deine **Status Quo**-Daten ein und passe die **Zukunftsannahmen** an.  
-Über den **Margin of Safety**-Schieberegler kannst du zusätzliche Sicherheit berücksichtigen.
+Dieses Beispiel zeigt, wie man von **kurzfristigen** zu **langfristigen** Annahmen
+über **10 Jahre** linear übergeht und daraus am Ende **7 Ergebniswerte** ableitet:
+1) Umsatz  
+2) Marktkapitalisierung  
+3) Wertsteigerung  
+4) Shareholder Yield  
+5) Gesamtrendite  
+6) Fairer Aktienkurs  
+7) Margin of Safety  
+
+**Hinweis**: Die Formeln sind vereinfacht. Passe sie an deine Bedürfnisse an.
 """)
 
 ###############################################################################
-# 1) STATUS QUO » DIE ZAHLEN HEUTE
+# 1) STATUS QUO
 ###############################################################################
-st.header("1) Status Quo » Die Zahlen heute")
+st.header("1) Status Quo")
 
-col1, col2, col3, col4 = st.columns(4)
+col_sq1, col_sq2, col_sq3 = st.columns(3)
 
-with col1:
-    boersenwert = st.number_input("Börsenwert (Mrd.)", value=1056.0, step=1.0)
-with col2:
-    aktienkurs = st.number_input("Aktienkurs", value=131.0, step=1.0)
-with col3:
-    umsatz = st.number_input("Umsatz (Mrd.)", value=514.0, step=1.0)
-with col4:
-    aussch_q = st.number_input("Ausschüttungsquote (%)", value=0.0, step=1.0)
+with col_sq1:
+    current_revenue = st.number_input("Aktueller Umsatz (Mrd.)", value=500.0)
+with col_sq2:
+    current_marketcap = st.number_input("Aktuelle Marktkap. (Mrd.)", value=1000.0)
+with col_sq3:
+    current_shares = st.number_input("Aktienanzahl (Mrd. Stück)", value=10.0)
 
 st.write("---")
 
 ###############################################################################
-# 2) ZUKUNFT » ANNAHMEN ZUR WERTENTWICKLUNG
+# 2) SZENARIEN-EINGABE: BEST, BASE, WORST
 ###############################################################################
-st.header("2) Zukunft » Annahmen zur Wertentwicklung")
-st.markdown("Die kurzfristigen Werte nähern sich über einen 10-Jahres-Horizont an die langfristigen an.")
+st.header("2) Szenarien-Eingaben (kurz- und langfristig)")
 
-colA, colB, colC, colD = st.columns(4)
+scenario_names = ["Best", "Base", "Worst"]
+scenario_data = {}
 
-with colA:
-    wachstum_kurz = st.number_input("Wachstum kurzf. (%)", value=7.0, step=1.0)
-    wachstum_lang = st.number_input("Wachstum langfr. (%)", value=14.0, step=1.0)
-with colB:
-    nettomarge_kurz = st.number_input("Nettomarge kurzf. (%)", value=4.0, step=1.0)
-    nettomarge_lang = st.number_input("Nettomarge langfr. (%)", value=10.0, step=1.0)
-with colC:
-    kgv_kurz = st.number_input("KGV kurzf.", value=15.0, step=1.0)
-    kgv_lang = st.number_input("KGV langfr.", value=25.0, step=1.0)
-with colD:
-    shyield_kurz = st.number_input("Shareholder Yield kurzf. (%)", value=1.0, step=0.5)
-    shyield_lang = st.number_input("Shareholder Yield langfr. (%)", value=3.0, step=0.5)
+cols = st.columns(3)
 
-margin_of_safety = st.slider("Margin of Safety (%)", min_value=0, max_value=50, value=20)
+def scenario_input(column, title, default_vals):
+    """
+    Helper, um pro Szenario (Kurz + Lang) die Inputs zu holen.
+    default_vals: (growth_short, growth_long, margin_short, margin_long, kgv_short, kgv_long, yield_short, yield_long, mos)
+    """
+    with column:
+        st.subheader(title)
+        growth_short = st.number_input(f"{title} Wachstum kurzf. (%)", value=default_vals[0])
+        growth_long = st.number_input(f"{title} Wachstum langfr. (%)", value=default_vals[1])
+        margin_short = st.number_input(f"{title} Nettomarge kurzf. (%)", value=default_vals[2])
+        margin_long = st.number_input(f"{title} Nettomarge langfr. (%)", value=default_vals[3])
+        kgv_short = st.number_input(f"{title} KGV kurzf.", value=default_vals[4])
+        kgv_long = st.number_input(f"{title} KGV langfr.", value=default_vals[5])
+        shyield_short = st.number_input(f"{title} Shareholder Yield kurzf. (%)", value=default_vals[6])
+        shyield_long = st.number_input(f"{title} Shareholder Yield langfr. (%)", value=default_vals[7])
+        mos = st.number_input(f"{title} Margin of Safety (%)", value=default_vals[8])
+
+    return {
+        "growth_short": growth_short,
+        "growth_long": growth_long,
+        "margin_short": margin_short,
+        "margin_long": margin_long,
+        "kgv_short": kgv_short,
+        "kgv_long": kgv_long,
+        "shyield_short": shyield_short,
+        "shyield_long": shyield_long,
+        "mos": mos
+    }
+
+# Default-Werte nur als Beispiel
+best_defaults = (15.0, 25.0, 10.0, 15.0, 20.0, 30.0, 2.0, 3.0, 10.0)
+base_defaults = (10.0, 15.0, 8.0, 12.0, 15.0, 20.0, 1.0, 2.0, 15.0)
+worst_defaults = (5.0, 10.0, 5.0, 8.0, 10.0, 15.0, 0.5, 1.0, 20.0)
+
+scenario_data["Best"] = scenario_input(cols[0], "Best Case", best_defaults)
+scenario_data["Base"] = scenario_input(cols[1], "Base Case", base_defaults)
+scenario_data["Worst"] = scenario_input(cols[2], "Worst Case", worst_defaults)
 
 st.write("---")
 
 ###############################################################################
-# 3) EINFACHE BEISPIEL-BERECHNUNG
+# 3) BERECHNUNG
 ###############################################################################
-st.header("Ergebnisse in zwei Szenarien (kurzfristig vs. langfristig)")
+st.header("3) Ergebnisse (nach 10 Jahren)")
 
-# Vereinfachte Demo-Funktionen
-def calc_fair_value(umsatz, marge, kgv):
-    """Berechnet einen sehr vereinfachten 'fairen Wert' = (Umsatz*marge) * kgv."""
-    net_income = umsatz * (marge / 100.0)
-    return net_income * kgv
+years = 10  # wir nehmen an, nach 10 Jahren sind wir 'langfristig' angekommen
 
-# Kurzfristig
-fair_value_kurz = calc_fair_value(umsatz, nettomarge_kurz, kgv_kurz)
-fair_value_kurz_mos = fair_value_kurz * (1 - margin_of_safety/100)
+def linear_interpolate(start, end, t, total):
+    """Lineare Interpolation von start nach end über total Zeiteinheiten."""
+    return start + (end - start) * (t / total)
 
-# Langfristig
-fair_value_lang = calc_fair_value(umsatz, nettomarge_lang, kgv_lang)
-fair_value_lang_mos = fair_value_lang * (1 - margin_of_safety/100)
+def calc_scenario(current_rev, current_mcap, current_shares, sc_data, years=10):
+    """
+    Führt die lineare Annäherung von kurz->lang durch:
+    - revenue wächst jedes Jahr mit 'growth_t'
+    - Nettomarge, KGV, Shareholder Yield interpolieren wir
+    - am Ende (Jahr=10) berechnen wir:
+        1) Umsatz
+        2) Marktkapitalisierung
+        3) Wertsteigerung
+        4) Shareholder Yield
+        5) Gesamtrendite
+        6) Fairer Aktienkurs
+        7) Margin of Safety
+    """
+    revenue = current_rev  # in Mrd.
+    marketcap0 = current_mcap * 1e9  # in absoluten Zahlen
+    shares_abs = current_shares * 1e9  # in absoluten Stück
 
-# Shareholder Yield + Wertsteigerung (Pseudo)
-# Angenommen, boersenwert*Mrd. => in echte Zahlen: boersenwert*1e9
-# Hier nur als Demo: (fair_value / actual_value) -1 => Wachstumsfaktor
-actual_value = boersenwert * 1e9  # Um Mrd. in "absolute" Zahlen zu wandeln
-wertsteigerung_kurz = (fair_value_kurz / actual_value) - 1
-wertsteigerung_lang = (fair_value_lang / actual_value) - 1
+    for t in range(1, years+1):
+        # Wachstumsrate, Marge, KGV, Yield => linear interpoliert
+        g_t = linear_interpolate(sc_data["growth_short"], sc_data["growth_long"], t, years)
+        m_t = linear_interpolate(sc_data["margin_short"], sc_data["margin_long"], t, years)
+        pe_t = linear_interpolate(sc_data["kgv_short"], sc_data["kgv_long"], t, years)
+        shyield_t = linear_interpolate(sc_data["shyield_short"], sc_data["shyield_long"], t, years)
 
-gesamtrendite_kurz = (wertsteigerung_kurz + (shyield_kurz / 100.0)) * 100
-gesamtrendite_lang = (wertsteigerung_lang + (shyield_lang / 100.0)) * 100
+        # Umsatz(t)
+        revenue *= (1 + g_t/100.0)
 
-# Tabellarische Übersicht
-import pandas as pd
+    # Jetzt haben wir revenue (in Jahr 10)
+    final_revenue = revenue  # Mrd.
 
-df_res = pd.DataFrame({
-    "": ["Kurzfristig", "Langfristig"],
-    "Wachstum (%)": [wachstum_kurz, wachstum_lang],
-    "Nettomarge (%)": [nettomarge_kurz, nettomarge_lang],
-    "KGV": [kgv_kurz, kgv_lang],
-    "Shareholder Yield (%)": [shyield_kurz, shyield_lang],
-    "Fair Value (o. MoS)": [fair_value_kurz, fair_value_lang],
-    "Fair Value (m. MoS)": [fair_value_kurz_mos, fair_value_lang_mos],
-    "Gesamtrendite (%)": [gesamtrendite_kurz, gesamtrendite_lang]
-})
+    # Nettomarge am Ende (t=10)
+    final_margin = m_t
+    # KGV am Ende (t=10)
+    final_kgv = pe_t
+    # Shareholder Yield am Ende (t=10)
+    final_shyield = shyield_t
 
-st.table(df_res)
+    # Gewinn in Jahr 10
+    final_net_income = final_revenue * (final_margin / 100.0)  # Mrd.
+
+    # MarketCap in Jahr 10
+    final_mcap_abs = final_net_income * final_kgv * 1e9  # in absoluten Zahlen
+    final_mcap_mrd = final_mcap_abs / 1e9  # wieder in Mrd.
+
+    # Wertsteigerung = (MC(10) / MC(0)) - 1
+    wertsteigerung = (final_mcap_abs / marketcap0) - 1
+
+    # Gesamtrendite ~ wertsteigerung + shareyield (vereinfacht)
+    gesamtrendite = (wertsteigerung * 100.0) + final_shyield
+
+    # Fairer Aktienkurs (ohne MoS)
+    fair_price = final_mcap_abs / shares_abs
+
+    # Fairer Aktienkurs (mit MoS)
+    mos_factor = 1 - sc_data["mos"] / 100.0
+    fair_price_mos = fair_price * mos_factor
+
+    # Ergebnis-Dict
+    return {
+        "Umsatz": final_revenue,                 # in Mrd.
+        "Marktkapitalisierung": final_mcap_mrd,  # in Mrd.
+        "Wertsteigerung": wertsteigerung * 100,  # in %
+        "Shareholder Yield": final_shyield,      # in %
+        "Gesamtrendite": gesamtrendite,          # in %
+        "Fairer Aktienkurs": fair_price,         # in absoluten €
+        "Margin of Safety": fair_price_mos       # in €
+    }
+
+results = {}
+for scenario in scenario_names:
+    sc_data = scenario_data[scenario]
+    res = calc_scenario(current_revenue, current_marketcap, current_shares, sc_data, years)
+    results[scenario] = res
+
+###############################################################################
+# 4) TABELLE MIT DEN 7 ERGEBNIS-WERTEN
+###############################################################################
+st.write("### Finale 7 Werte pro Szenario (nach 10 Jahren)")
+
+rows = [
+    "Umsatz (Mrd.)",
+    "Marktkapitalisierung (Mrd.)",
+    "Wertsteigerung (%)",
+    "Shareholder Yield (%)",
+    "Gesamtrendite (%)",
+    "Fairer Aktienkurs (€)",
+    "Fairer Aktienkurs (mit MoS) (€)"
+]
+
+def format_res(res_dict):
+    return [
+        f"{res_dict['Umsatz']:.2f}",
+        f"{res_dict['Marktkapitalisierung']:.2f}",
+        f"{res_dict['Wertsteigerung']:.2f}",
+        f"{res_dict['Shareholder Yield']:.2f}",
+        f"{res_dict['Gesamtrendite']:.2f}",
+        f"{res_dict['Fairer Aktienkurs']:.2f}",
+        f"{res_dict['Margin of Safety']:.2f}"
+    ]
+
+table_data = {
+    "Best": format_res(results["Best"]),
+    "Base": format_res(results["Base"]),
+    "Worst": format_res(results["Worst"])
+}
+
+df_output = pd.DataFrame(table_data, index=rows)
+st.table(df_output)
 
 st.markdown("""
-**Hinweis**: Alle Berechnungen sind stark vereinfacht und dienen nur der Demonstration 
-des Layouts. In der Realität würdest du DCF, Diskontierung, etc. berücksichtigen.
-""")
-
-st.write("---")
-
-###############################################################################
-# 4) GRAFISCHE DARSTELLUNG: BALKENDIAGRAMM
-###############################################################################
-st.subheader("Jährliche Renditeerwartung (Beispiel)")
-
-labels = ["kurzfristig", "langfristig"]
-renditen = [gesamtrendite_kurz, gesamtrendite_lang]
-
-fig, ax = plt.subplots(figsize=(6,4))
-bars = ax.bar(labels, renditen, color=["#1f77b4", "#ff7f0e"])
-ax.set_ylabel("Rendite in %")
-ax.set_title("Jährliche Renditeerwartung (vereinfacht)")
-for i, bar in enumerate(bars):
-    ax.text(
-        bar.get_x() + bar.get_width()/2, 
-        bar.get_height() + 0.5, 
-        f"{renditen[i]:.1f}%", 
-        ha="center"
-    )
-# Falls Renditen sehr negativ, Achse anpassen
-ax.set_ylim([min(renditen)-5, max(renditen)+5])
-
-st.pyplot(fig)
-
-st.write("---")
-
-###############################################################################
-# ABSCHLUSS / DISCLAIMER
-###############################################################################
-st.markdown("""
-**Disclaimer**:  
-Dies ist ein vereinfachtes Modell und keine Anlageberatung. 
-Die Werte sind Beispiele und dienen nur zur Illustration.
+*Alle Berechnungen sind stark vereinfacht und dienen nur als **Demo**, 
+wie man von kurz- zu langfristigen Annahmen linear übergehen kann.*
 """)
