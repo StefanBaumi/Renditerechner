@@ -3,48 +3,29 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-# ---------------------------------------------------------
-# Seitenkonfiguration
-# ---------------------------------------------------------
-st.set_page_config(layout="centered", page_title="Erweitertes Renditerechner-Tool")
+###############################################################################
+# STREAMLIT-SEITENKONFIGURATION
+###############################################################################
+st.set_page_config(
+    page_title="Renditerechner Clean",
+    layout="wide"
+)
 
-# Optional: eigenes Theme via CSS (einfaches Beispiel)
-st.markdown("""
-<style>
-/* Hintergrundfarbe */
-body {
-    background-color: #f8f9fa;
-}
-/* Überschriften-Stil */
-h1, h2, h3 {
-    color: #333333;
-    font-family: "Arial", sans-serif;
-}
-/* Kartenähnliche Container */
-.block-container {
-    background-color: #ffffff;
-    padding: 2rem 2rem 2rem 2rem;
-    border-radius: 8px;
-    box-shadow: 0px 0px 10px rgba(0,0,0,0.05);
-}
-/* Tabellenstil */
-table {
-    font-size: 14px;
-}
-</style>
-""", unsafe_allow_html=True)
-
-# ---------------------------------------------------------
-# TITEL
-# ---------------------------------------------------------
+###############################################################################
+# TITEL & EINLEITUNG
+###############################################################################
 st.title("Berechnung der Rendite in drei Szenarien")
 st.markdown("""
-### Status Quo » Die Zahlen heute
+Willkommen zu deinem Renditerechner!  
+Gib unten deine **Status Quo**-Daten ein und passe die **Zukunftsannahmen** an.  
+Über den **Margin of Safety**-Schieberegler kannst du zusätzliche Sicherheit berücksichtigen.
 """)
 
-# ---------------------------------------------------------
-# 1) STATUS QUO EINGABEN
-# ---------------------------------------------------------
+###############################################################################
+# 1) STATUS QUO » DIE ZAHLEN HEUTE
+###############################################################################
+st.header("1) Status Quo » Die Zahlen heute")
+
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
@@ -54,18 +35,15 @@ with col2:
 with col3:
     umsatz = st.number_input("Umsatz (Mrd.)", value=514.0, step=1.0)
 with col4:
-    ausschüttungsquote = st.number_input("Ausschüttungsquote (%)", value=0.0, step=1.0)
+    aussch_q = st.number_input("Ausschüttungsquote (%)", value=0.0, step=1.0)
 
 st.write("---")
 
-# ---------------------------------------------------------
-# 2) ZUKUNFTSANNAHMEN
-# ---------------------------------------------------------
-st.markdown("### Zukunft » Annahmen zur Wertentwicklung")
-
-st.markdown("""
-Die kurzfristigen Werte nähern sich über einen 10-Jahres-Horizont an die langfristigen an.
-""")
+###############################################################################
+# 2) ZUKUNFT » ANNAHMEN ZUR WERTENTWICKLUNG
+###############################################################################
+st.header("2) Zukunft » Annahmen zur Wertentwicklung")
+st.markdown("Die kurzfristigen Werte nähern sich über einen 10-Jahres-Horizont an die langfristigen an.")
 
 colA, colB, colC, colD = st.columns(4)
 
@@ -79,24 +57,22 @@ with colC:
     kgv_kurz = st.number_input("KGV kurzf.", value=15.0, step=1.0)
     kgv_lang = st.number_input("KGV langfr.", value=25.0, step=1.0)
 with colD:
-    shareholder_yield_kurz = st.number_input("Shareholder Yield kurzf. (%)", value=1.0, step=1.0)
-    shareholder_yield_lang = st.number_input("Shareholder Yield langfr. (%)", value=3.0, step=1.0)
+    shyield_kurz = st.number_input("Shareholder Yield kurzf. (%)", value=1.0, step=0.5)
+    shyield_lang = st.number_input("Shareholder Yield langfr. (%)", value=3.0, step=0.5)
 
 margin_of_safety = st.slider("Margin of Safety (%)", min_value=0, max_value=50, value=20)
 
 st.write("---")
 
-# ---------------------------------------------------------
-# 3) BERECHNUNGEN / TABELLE
-#    -> Hier bauen wir eine Beispiel-Tabelle, die "kurzfristig" / "langfristig" anzeigt
-# ---------------------------------------------------------
-st.markdown("### Ergebnisse in zwei Szenarien (kurzfristig vs. langfristig)")
+###############################################################################
+# 3) EINFACHE BEISPIEL-BERECHNUNG
+###############################################################################
+st.header("Ergebnisse in zwei Szenarien (kurzfristig vs. langfristig)")
 
-# Beispielhafte Berechnungen (sehr vereinfacht):
+# Vereinfachte Demo-Funktionen
 def calc_fair_value(umsatz, marge, kgv):
-    # Netto-Gewinn
-    net_income = umsatz * (marge / 100)
-    # Fairer Wert = net_income * kgv
+    """Berechnet einen sehr vereinfachten 'fairen Wert' = (Umsatz*marge) * kgv."""
+    net_income = umsatz * (marge / 100.0)
     return net_income * kgv
 
 # Kurzfristig
@@ -107,63 +83,70 @@ fair_value_kurz_mos = fair_value_kurz * (1 - margin_of_safety/100)
 fair_value_lang = calc_fair_value(umsatz, nettomarge_lang, kgv_lang)
 fair_value_lang_mos = fair_value_lang * (1 - margin_of_safety/100)
 
-# Shareholder Yield Einbeziehen (sehr vereinfacht):
-# "Gesamtrendite" ~ Wertsteigerung + Shareholder Yield
-# Hier rein exemplarisch:
-wertsteigerung_kurz = (fair_value_kurz / (boersenwert*1e6)) - 1  # pseudo
-wertsteigerung_lang = (fair_value_lang / (boersenwert*1e6)) - 1
+# Shareholder Yield + Wertsteigerung (Pseudo)
+# Angenommen, boersenwert*Mrd. => in echte Zahlen: boersenwert*1e9
+# Hier nur als Demo: (fair_value / actual_value) -1 => Wachstumsfaktor
+actual_value = boersenwert * 1e9  # Um Mrd. in "absolute" Zahlen zu wandeln
+wertsteigerung_kurz = (fair_value_kurz / actual_value) - 1
+wertsteigerung_lang = (fair_value_lang / actual_value) - 1
 
-gesamtrendite_kurz = (wertsteigerung_kurz + (shareholder_yield_kurz/100)) * 100
-gesamtrendite_lang = (wertsteigerung_lang + (shareholder_yield_lang/100)) * 100
+gesamtrendite_kurz = (wertsteigerung_kurz + (shyield_kurz / 100.0)) * 100
+gesamtrendite_lang = (wertsteigerung_lang + (shyield_lang / 100.0)) * 100
 
-df_ergebnisse = pd.DataFrame({
+# Tabellarische Übersicht
+import pandas as pd
+
+df_res = pd.DataFrame({
     "": ["Kurzfristig", "Langfristig"],
     "Wachstum (%)": [wachstum_kurz, wachstum_lang],
     "Nettomarge (%)": [nettomarge_kurz, nettomarge_lang],
     "KGV": [kgv_kurz, kgv_lang],
-    "Shareholder Yield (%)": [shareholder_yield_kurz, shareholder_yield_lang],
-    "Fairer Wert (o. MoS)": [fair_value_kurz, fair_value_lang],
-    "Fairer Wert (m. MoS)": [fair_value_kurz_mos, fair_value_lang_mos],
+    "Shareholder Yield (%)": [shyield_kurz, shyield_lang],
+    "Fair Value (o. MoS)": [fair_value_kurz, fair_value_lang],
+    "Fair Value (m. MoS)": [fair_value_kurz_mos, fair_value_lang_mos],
     "Gesamtrendite (%)": [gesamtrendite_kurz, gesamtrendite_lang]
 })
 
-st.table(df_ergebnisse)
+st.table(df_res)
 
 st.markdown("""
-**Hinweis**: Dies ist eine stark vereinfachte Darstellung. 
-In der Realität würden hier komplexere Formeln für Wachstum, 
-DCF-Berechnungen, Diskontierung, etc. verwendet.
+**Hinweis**: Alle Berechnungen sind stark vereinfacht und dienen nur der Demonstration 
+des Layouts. In der Realität würdest du DCF, Diskontierung, etc. berücksichtigen.
 """)
 
 st.write("---")
 
-# ---------------------------------------------------------
-# 4) GRAFIK
-#    -> Beispiel: Ein Balkendiagramm zur jährlichen Rendite
-# ---------------------------------------------------------
-st.markdown("### Jährl. Renditeerwartung in %")
+###############################################################################
+# 4) GRAFISCHE DARSTELLUNG: BALKENDIAGRAMM
+###############################################################################
+st.subheader("Jährliche Renditeerwartung (Beispiel)")
 
 labels = ["kurzfristig", "langfristig"]
 renditen = [gesamtrendite_kurz, gesamtrendite_lang]
 
-fig, ax = plt.subplots(figsize=(5,3))
-ax.bar(labels, renditen, color=["#1f77b4", "#ff7f0e"])
-ax.set_ylim([min(renditen)-5, max(renditen)+5])
+fig, ax = plt.subplots(figsize=(6,4))
+bars = ax.bar(labels, renditen, color=["#1f77b4", "#ff7f0e"])
 ax.set_ylabel("Rendite in %")
-for i, v in enumerate(renditen):
-    ax.text(i, v + 0.5, f"{v:.1f}%", ha="center")
-ax.set_title("Jährliche Renditeerwartung (Beispiel)")
+ax.set_title("Jährliche Renditeerwartung (vereinfacht)")
+for i, bar in enumerate(bars):
+    ax.text(
+        bar.get_x() + bar.get_width()/2, 
+        bar.get_height() + 0.5, 
+        f"{renditen[i]:.1f}%", 
+        ha="center"
+    )
+# Falls Renditen sehr negativ, Achse anpassen
+ax.set_ylim([min(renditen)-5, max(renditen)+5])
 
 st.pyplot(fig)
 
 st.write("---")
 
-# ---------------------------------------------------------
-# ABSCHLUSS
-# ---------------------------------------------------------
+###############################################################################
+# ABSCHLUSS / DISCLAIMER
+###############################################################################
 st.markdown("""
-**Disclaimer**: 
-Keine Garantie für die Zukunft. 
-Dieses Beispiel soll nur das Layout demonstrieren und ersetzt 
-keine professionelle Anlageberatung.
+**Disclaimer**:  
+Dies ist ein vereinfachtes Modell und keine Anlageberatung. 
+Die Werte sind Beispiele und dienen nur zur Illustration.
 """)
