@@ -1,69 +1,84 @@
 import streamlit as st
+import yfinance as yf
 import pandas as pd
 
 ###############################################################################
 # STREAMLIT-KONFIG
 ###############################################################################
-st.set_page_config(page_title="Renditerechner (Lineare Annäherung)", layout="wide")
+st.set_page_config(page_title="Renditerechner – Shareholder Yield & MoS als Output", layout="wide")
 
-st.title("Renditerechner mit 3 Szenarien (Best, Base, Worst) – Lineare Annäherung")
+st.title("Renditerechner mit 3 Szenarien – Margin of Safety & Shareholder Yield als Ergebnis")
 
 st.markdown("""
-Dieses Beispiel zeigt, wie man von **kurzfristigen** zu **langfristigen** Annahmen
-über **10 Jahre** linear übergeht und daraus am Ende **7 Ergebniswerte** ableitet:
-1) Umsatz  
-2) Marktkapitalisierung  
-3) Wertsteigerung  
-4) Shareholder Yield  
-5) Gesamtrendite  
-6) Fairer Aktienkurs  
-7) Margin of Safety  
-
-**Hinweis**: Die Formeln sind vereinfacht. Passe sie an deine Bedürfnisse an.
+**Funktionen**:
+1. Eingabe eines **Aktien-Tickers** → Laden von Basisdaten via `yfinance`.  
+2. Drei Szenarien (Best, Base, Worst), jeweils mit **kurz- und langfristigen** Annahmen für Wachstum, Nettomarge, KGV und Ausschüttungsquote.  
+3. **Shareholder Yield** = Ausschüttung / Marktkapitalisierung (als Output).  
+4. **Margin of Safety** = (Fairer Kurs - Aktueller Kurs) / Fairer Kurs (als Output).  
+5. Lineare Annäherung über 10 Jahre von den Kurz- zu den Langfristwerten.
 """)
 
 ###############################################################################
-# 1) STATUS QUO
+# 1) EINGABE: AKTIEN-TICKER + DATENLADEN
 ###############################################################################
-st.header("1) Status Quo")
+st.header("1) Aktien-Ticker eingeben & Status Quo laden")
 
-col_sq1, col_sq2, col_sq3 = st.columns(3)
+ticker = st.text_input("Aktien-Ticker (z.B. AAPL, AMZN, TSLA)", value="AAPL")
 
-with col_sq1:
-    current_revenue = st.number_input("Aktueller Umsatz (Mrd.)", value=500.0)
-with col_sq2:
-    current_marketcap = st.number_input("Aktuelle Marktkap. (Mrd.)", value=1000.0)
-with col_sq3:
-    current_shares = st.number_input("Aktienanzahl (Mrd. Stück)", value=10.0)
+try:
+    data = yf.Ticker(ticker).info
+    current_price = data.get("regularMarketPrice", None)
+    market_cap = data.get("marketCap", None)
+    revenue_ttm = data.get("totalRevenue", None)
+    shares_outstanding = data.get("sharesOutstanding", None)
+except:
+    data = {}
+    current_price = None
+    market_cap = None
+    revenue_ttm = None
+    shares_outstanding = None
+
+# Fallback-Werte, falls yfinance nichts liefert
+if current_price is None:
+    current_price = 100.0
+if market_cap is None:
+    market_cap = 1.0e11
+if revenue_ttm is None:
+    revenue_ttm = 5.0e10
+if shares_outstanding is None or shares_outstanding == 0:
+    # Notfalls aus Marktkap / Kurs berechnen
+    shares_outstanding = market_cap / current_price
+
+st.write(f"**Aktueller Kurs**: {current_price:.2f} USD")
+st.write(f"**Marktkapitalisierung**: {market_cap/1e9:.2f} Mrd. USD")
+st.write(f"**Umsatz (TTM)**: {revenue_ttm/1e9:.2f} Mrd. USD")
+st.write(f"**Aktienanzahl**: {shares_outstanding/1e6:.2f} Mio. Stück")
 
 st.write("---")
 
 ###############################################################################
-# 2) SZENARIEN-EINGABE: BEST, BASE, WORST
+# 2) SZENARIEN-EINGABE (Best, Base, Worst)
 ###############################################################################
 st.header("2) Szenarien-Eingaben (kurz- und langfristig)")
 
 scenario_names = ["Best", "Base", "Worst"]
 scenario_data = {}
-
 cols = st.columns(3)
 
-def scenario_input(column, title, default_vals):
+def scenario_input(col, title, defaults):
     """
-    Helper, um pro Szenario (Kurz + Lang) die Inputs zu holen.
-    default_vals: (growth_short, growth_long, margin_short, margin_long, kgv_short, kgv_long, yield_short, yield_long, mos)
+    defaults: (growth_short, growth_long, margin_short, margin_long, kgv_short, kgv_long, payout_short, payout_long)
     """
-    with column:
+    with col:
         st.subheader(title)
-        growth_short = st.number_input(f"{title} Wachstum kurzf. (%)", value=default_vals[0])
-        growth_long = st.number_input(f"{title} Wachstum langfr. (%)", value=default_vals[1])
-        margin_short = st.number_input(f"{title} Nettomarge kurzf. (%)", value=default_vals[2])
-        margin_long = st.number_input(f"{title} Nettomarge langfr. (%)", value=default_vals[3])
-        kgv_short = st.number_input(f"{title} KGV kurzf.", value=default_vals[4])
-        kgv_long = st.number_input(f"{title} KGV langfr.", value=default_vals[5])
-        shyield_short = st.number_input(f"{title} Shareholder Yield kurzf. (%)", value=default_vals[6])
-        shyield_long = st.number_input(f"{title} Shareholder Yield langfr. (%)", value=default_vals[7])
-        mos = st.number_input(f"{title} Margin of Safety (%)", value=default_vals[8])
+        growth_short = st.number_input(f"{title} Wachstum kurzf. (%)", value=defaults[0])
+        growth_long = st.number_input(f"{title} Wachstum langfr. (%)", value=defaults[1])
+        margin_short = st.number_input(f"{title} Nettomarge kurzf. (%)", value=defaults[2])
+        margin_long = st.number_input(f"{title} Nettomarge langfr. (%)", value=defaults[3])
+        kgv_short = st.number_input(f"{title} KGV kurzf.", value=defaults[4])
+        kgv_long = st.number_input(f"{title} KGV langfr.", value=defaults[5])
+        payout_short = st.number_input(f"{title} Ausschüttungsquote kurzf. (%)", value=defaults[6])
+        payout_long = st.number_input(f"{title} Ausschüttungsquote langfr. (%)", value=defaults[7])
 
     return {
         "growth_short": growth_short,
@@ -72,15 +87,13 @@ def scenario_input(column, title, default_vals):
         "margin_long": margin_long,
         "kgv_short": kgv_short,
         "kgv_long": kgv_long,
-        "shyield_short": shyield_short,
-        "shyield_long": shyield_long,
-        "mos": mos
+        "payout_short": payout_short,
+        "payout_long": payout_long
     }
 
-# Default-Werte nur als Beispiel
-best_defaults = (15.0, 25.0, 10.0, 15.0, 20.0, 30.0, 2.0, 3.0, 10.0)
-base_defaults = (10.0, 15.0, 8.0, 12.0, 15.0, 20.0, 1.0, 2.0, 15.0)
-worst_defaults = (5.0, 10.0, 5.0, 8.0, 10.0, 15.0, 0.5, 1.0, 20.0)
+best_defaults = (15.0, 25.0, 10.0, 15.0, 20.0, 30.0, 20.0, 30.0)
+base_defaults = (10.0, 15.0, 8.0, 12.0, 15.0, 20.0, 10.0, 20.0)
+worst_defaults = (5.0, 10.0, 5.0, 8.0, 10.0, 15.0, 5.0, 10.0)
 
 scenario_data["Best"] = scenario_input(cols[0], "Best Case", best_defaults)
 scenario_data["Base"] = scenario_input(cols[1], "Base Case", base_defaults)
@@ -89,93 +102,110 @@ scenario_data["Worst"] = scenario_input(cols[2], "Worst Case", worst_defaults)
 st.write("---")
 
 ###############################################################################
-# 3) BERECHNUNG
+# 3) LINEARE INTERPOLATION & BERECHNUNG
 ###############################################################################
 st.header("3) Ergebnisse (nach 10 Jahren)")
 
-years = 10  # wir nehmen an, nach 10 Jahren sind wir 'langfristig' angekommen
-
 def linear_interpolate(start, end, t, total):
-    """Lineare Interpolation von start nach end über total Zeiteinheiten."""
+    """Lineare Interpolation von start -> end über total Zeiteinheiten."""
     return start + (end - start) * (t / total)
 
-def calc_scenario(current_rev, current_mcap, current_shares, sc_data, years=10):
+years = 10
+
+def calc_scenario(cur_revenue, cur_mcap, cur_price, cur_shares, sc_data, years=10):
     """
-    Führt die lineare Annäherung von kurz->lang durch:
-    - revenue wächst jedes Jahr mit 'growth_t'
-    - Nettomarge, KGV, Shareholder Yield interpolieren wir
-    - am Ende (Jahr=10) berechnen wir:
-        1) Umsatz
-        2) Marktkapitalisierung
-        3) Wertsteigerung
-        4) Shareholder Yield
-        5) Gesamtrendite
-        6) Fairer Aktienkurs
-        7) Margin of Safety
+    1. Interpoliere Wachstum, Nettomarge, KGV, Ausschüttungsquote von kurz->lang.
+    2. Umsatz wächst pro Jahr mit 'growth_t'.
+    3. Am Ende (Jahr 10) berechnen wir:
+       - Gewinn = Umsatz * Nettomarge
+       - Marktkapitalisierung = Gewinn * KGV
+       - Shareholder Yield = Ausschüttung / Marktkapitalisierung
+       - Gesamtrendite = Wertsteigerung + Shareholder Yield (vereinfacht)
+       - Fairer Aktienkurs = Marktkapitalisierung / Aktienanzahl
+       - Margin of Safety = (Fairer Kurs - Aktueller Kurs)/Fairer Kurs
     """
-    revenue = current_rev  # in Mrd.
-    marketcap0 = current_mcap * 1e9  # in absoluten Zahlen
-    shares_abs = current_shares * 1e9  # in absoluten Stück
+    # Startwerte
+    revenue = cur_revenue  # in absoluten Zahlen (TTM)
+    # Falls dein revenue in yfinance TTM = 5e10 => 50 Mrd. => wir rechnen in Mrd.:
+    revenue_mrd = revenue / 1e9
+
+    marketcap_abs = cur_mcap  # z.B. 1e11
+    shares_abs = cur_shares
 
     for t in range(1, years+1):
-        # Wachstumsrate, Marge, KGV, Yield => linear interpoliert
         g_t = linear_interpolate(sc_data["growth_short"], sc_data["growth_long"], t, years)
         m_t = linear_interpolate(sc_data["margin_short"], sc_data["margin_long"], t, years)
         pe_t = linear_interpolate(sc_data["kgv_short"], sc_data["kgv_long"], t, years)
-        shyield_t = linear_interpolate(sc_data["shyield_short"], sc_data["shyield_long"], t, years)
+        payout_t = linear_interpolate(sc_data["payout_short"], sc_data["payout_long"], t, years)
 
-        # Umsatz(t)
-        revenue *= (1 + g_t/100.0)
+        # Umsatz(t) in Mrd.
+        revenue_mrd *= (1 + g_t/100.0)
 
-    # Jetzt haben wir revenue (in Jahr 10)
-    final_revenue = revenue  # Mrd.
-
-    # Nettomarge am Ende (t=10)
+    # final values
+    final_growth = g_t
     final_margin = m_t
-    # KGV am Ende (t=10)
     final_kgv = pe_t
-    # Shareholder Yield am Ende (t=10)
-    final_shyield = shyield_t
+    final_payout = payout_t
 
-    # Gewinn in Jahr 10
-    final_net_income = final_revenue * (final_margin / 100.0)  # Mrd.
+    final_revenue_mrd = revenue_mrd
+    # Gewinn in Mrd.
+    final_net_income_mrd = final_revenue_mrd * (final_margin / 100.0)
+    # MarketCap in absoluten Zahlen
+    final_mcap_abs = final_net_income_mrd * final_kgv * 1e9
+    final_mcap_mrd = final_mcap_abs / 1e9
 
-    # MarketCap in Jahr 10
-    final_mcap_abs = final_net_income * final_kgv * 1e9  # in absoluten Zahlen
-    final_mcap_mrd = final_mcap_abs / 1e9  # wieder in Mrd.
+    # Wertsteigerung = (final_mcap_abs / marketcap_abs) - 1
+    wertsteigerung = (final_mcap_abs / marketcap_abs) - 1
 
-    # Wertsteigerung = (MC(10) / MC(0)) - 1
-    wertsteigerung = (final_mcap_abs / marketcap0) - 1
+    # Ausschüttung in Mrd.
+    final_payout_amount_mrd = final_net_income_mrd * (final_payout / 100.0)
+    # Shareholder Yield = (Ausschüttung / MarketCap)
+    if final_mcap_abs > 0:
+        final_shyield = (final_payout_amount_mrd * 1e9 / final_mcap_abs) * 100.0
+    else:
+        final_shyield = 0.0
 
-    # Gesamtrendite ~ wertsteigerung + shareyield (vereinfacht)
+    # Gesamtrendite = Wertsteigerung + Shareholder Yield (vereinfacht)
     gesamtrendite = (wertsteigerung * 100.0) + final_shyield
 
-    # Fairer Aktienkurs (ohne MoS)
-    fair_price = final_mcap_abs / shares_abs
+    # Fairer Aktienkurs
+    if shares_abs > 0:
+        fair_price = final_mcap_abs / shares_abs
+    else:
+        fair_price = 0.0
 
-    # Fairer Aktienkurs (mit MoS)
-    mos_factor = 1 - sc_data["mos"] / 100.0
-    fair_price_mos = fair_price * mos_factor
+    # Margin of Safety
+    # = (FairerKurs - AktuellerKurs) / FairerKurs * 100
+    if fair_price > 0:
+        mos = ((fair_price - cur_price) / fair_price) * 100.0
+    else:
+        mos = 0.0
 
-    # Ergebnis-Dict
     return {
-        "Umsatz": final_revenue,                 # in Mrd.
-        "Marktkapitalisierung": final_mcap_mrd,  # in Mrd.
-        "Wertsteigerung": wertsteigerung * 100,  # in %
-        "Shareholder Yield": final_shyield,      # in %
-        "Gesamtrendite": gesamtrendite,          # in %
-        "Fairer Aktienkurs": fair_price,         # in absoluten €
-        "Margin of Safety": fair_price_mos       # in €
+        "Umsatz": final_revenue_mrd,            # Mrd.
+        "Marktkapitalisierung": final_mcap_mrd, # Mrd.
+        "Wertsteigerung": wertsteigerung * 100, # %
+        "Shareholder Yield": final_shyield,     # %
+        "Gesamtrendite": gesamtrendite,         # %
+        "Fairer Aktienkurs": fair_price,        # USD
+        "Margin of Safety": mos                 # %
     }
 
 results = {}
 for scenario in scenario_names:
     sc_data = scenario_data[scenario]
-    res = calc_scenario(current_revenue, current_marketcap, current_shares, sc_data, years)
+    res = calc_scenario(
+        cur_revenue=revenue_ttm, 
+        cur_mcap=market_cap, 
+        cur_price=current_price, 
+        cur_shares=shares_outstanding, 
+        sc_data=sc_data, 
+        years=years
+    )
     results[scenario] = res
 
 ###############################################################################
-# 4) TABELLE MIT DEN 7 ERGEBNIS-WERTEN
+# 4) TABELLE: 7 ERGEBNISWERTE
 ###############################################################################
 st.write("### Finale 7 Werte pro Szenario (nach 10 Jahren)")
 
@@ -185,8 +215,8 @@ rows = [
     "Wertsteigerung (%)",
     "Shareholder Yield (%)",
     "Gesamtrendite (%)",
-    "Fairer Aktienkurs (€)",
-    "Fairer Aktienkurs (mit MoS) (€)"
+    "Fairer Aktienkurs (USD)",
+    "Margin of Safety (%)"
 ]
 
 def format_res(res_dict):
@@ -210,6 +240,6 @@ df_output = pd.DataFrame(table_data, index=rows)
 st.table(df_output)
 
 st.markdown("""
-*Alle Berechnungen sind stark vereinfacht und dienen nur als **Demo**, 
-wie man von kurz- zu langfristigen Annahmen linear übergehen kann.*
+*Disclaimer: Dies ist ein **vereinfachtes** Modell. In der Praxis können 
+mehrstufige Wachstumsphasen, Diskontierung, verschiedene Margen etc. berücksichtigt werden.*
 """)
